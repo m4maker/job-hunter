@@ -1,0 +1,33 @@
+name: Daily Job Search
+
+on:
+  schedule:
+    - cron: '0 8 * * *'  # Run at 8 AM UTC daily
+  workflow_dispatch:      # Allow manual trigger
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Build
+        run: go build -o job-hunter ./cmd/report
+
+      - name: Run Job Search
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+        run: |
+          ./job-hunter \
+            -title="${{ vars.JOB_TITLE }}" \
+            -location="${{ vars.JOB_LOCATION }}" \
+            -email="${{ vars.NOTIFICATION_EMAIL }}" \
+            -data-dir="./data"
