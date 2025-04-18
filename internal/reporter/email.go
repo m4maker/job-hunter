@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"html/template"
+	"log"
 	"net/smtp"
 	"os"
 	"time"
@@ -73,6 +74,7 @@ const emailTemplate = `
 `
 
 func SendJobReport(config EmailConfig, report JobReport) error {
+	log.Printf("Generating email for %d jobs (%d new)", len(report.Jobs), len(report.NewJobs))
 	// Parse template
 	tmpl, err := template.New("email").Parse(emailTemplate)
 	if err != nil {
@@ -81,6 +83,7 @@ func SendJobReport(config EmailConfig, report JobReport) error {
 
 	// Generate HTML
 	var body bytes.Buffer
+	log.Printf("Executing email template")
 	if err := tmpl.Execute(&body, report); err != nil {
 		return fmt.Errorf("executing template: %w", err)
 	}
@@ -105,7 +108,13 @@ func SendJobReport(config EmailConfig, report JobReport) error {
 	// Send email
 	auth := smtp.PlainAuth("", config.SMTPUsername, config.SMTPPassword, config.SMTPHost)
 	addr := fmt.Sprintf("%s:%d", config.SMTPHost, config.SMTPPort)
-	return smtp.SendMail(addr, auth, config.FromEmail, []string{config.ToEmail}, message.Bytes())
+	log.Printf("Sending email from %s to %s via %s", config.FromEmail, config.ToEmail, addr)
+	err := smtp.SendMail(addr, auth, config.FromEmail, []string{config.ToEmail}, message.Bytes())
+	if err != nil {
+		log.Printf("Email content: %s", body.String())
+		return fmt.Errorf("sending mail: %w", err)
+	}
+	return nil
 }
 
 func SaveJobsToFile(jobs []models.Job, filename string) error {

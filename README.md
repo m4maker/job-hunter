@@ -51,15 +51,32 @@ export SMTP_PASSWORD=your-app-password
 export FROM_EMAIL=your-email@gmail.com
 ```
 
+## Email Setup
+
+The job hunter uses Gmail SMTP to send email reports. Follow these steps to set up your Gmail account:
+
+1. Go to your [Google Account settings](https://myaccount.google.com/)
+2. Click on "Security" in the left sidebar
+3. Under "Signing in to Google," enable "2-Step Verification" if not already enabled
+4. Go back to Security and find "App passwords"
+5. Click "App passwords" and sign in if prompted
+6. At the bottom:
+   - Click "Select app" and choose "Mail"
+   - Select "Other (Custom name)" and enter "Job Hunter"
+   - Click "Generate"
+7. Copy the 16-character password that Google generates
+
+This app password will be used in the GitHub Actions setup.
+
 ## GitHub Actions Setup
 
 1. Fork this repository
 
-2. Add the following secrets in your GitHub repository:
-   - `SMTP_HOST`: Your SMTP server host (e.g., smtp.gmail.com)
-   - `SMTP_USERNAME`: Your SMTP username
-   - `SMTP_PASSWORD`: Your SMTP password or app-specific password
-   - `FROM_EMAIL`: Email address to send from
+2. Add the following secrets in your GitHub repository (Settings → Secrets and variables → Actions → New repository secret):
+   - `SMTP_HOST`: smtp.gmail.com
+   - `SMTP_USERNAME`: Your Gmail address
+   - `SMTP_PASSWORD`: The 16-character app password generated above
+   - `FROM_EMAIL`: Your Gmail address
 
 3. Add the following variables in your GitHub repository:
    - `JOB_TITLE`: The job title you're looking for

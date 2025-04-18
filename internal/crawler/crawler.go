@@ -2,8 +2,10 @@ package crawler
 
 import (
 	"context"
-	"job-hunter/internal/models"
+	"log"
 	"sync"
+
+	"job-hunter/internal/models"
 )
 
 type JobCrawler struct {
@@ -31,6 +33,7 @@ func NewJobCrawler() *JobCrawler {
 }
 
 func (jc *JobCrawler) SearchJobs(ctx context.Context, params JobSearchParams) ([]models.Job, error) {
+	log.Printf("Starting job search with %d sources", len(jc.sources))
 	var (
 		wg      sync.WaitGroup
 		mu      sync.Mutex
@@ -40,15 +43,18 @@ func (jc *JobCrawler) SearchJobs(ctx context.Context, params JobSearchParams) ([
 	for _, source := range jc.sources {
 		wg.Add(1)
 		go func(s Source) {
+			log.Printf("Searching source: %T", s)
 			defer wg.Done()
 			
 			jobs, err := s.Crawl(ctx, params)
 			if err != nil {
+				log.Printf("Error from source %T: %v", s, err)
 				// Log error but continue with other sources
 				return
 			}
 			
 			mu.Lock()
+			log.Printf("Found %d jobs from source %T", len(jobs), s)
 			results = append(results, jobs...)
 			mu.Unlock()
 		}(source)

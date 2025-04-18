@@ -13,11 +13,15 @@ import (
 )
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
 	title := flag.String("title", "", "Job title to search for")
 	location := flag.String("location", "", "Job location")
 	email := flag.String("email", "", "Email address to send report to")
 	dataDir := flag.String("data-dir", "", "Directory to store job data")
 	flag.Parse()
+
+	log.Printf("Starting job search with title=%s, location=%s", *title, *location)
 
 	if *title == "" {
 		log.Fatal("Job title is required")
@@ -48,9 +52,14 @@ func main() {
 		Location: *location,
 	}
 
+	log.Printf("Searching for jobs...")
 	jobs, err := c.SearchJobs(context.Background(), params)
 	if err != nil {
 		log.Fatalf("Failed to search jobs: %v", err)
+	}
+	log.Printf("Found %d jobs", len(jobs))
+	for i, job := range jobs {
+		log.Printf("Job %d: %s at %s (%s)", i+1, job.Title, job.Company, job.Source)
 	}
 
 	// Load previous jobs
@@ -87,7 +96,9 @@ func main() {
 		ToEmail:      *email,
 	}
 
+	log.Printf("Sending email report to %s", *email)
 	if err := reporter.SendJobReport(config, report); err != nil {
 		log.Fatalf("Failed to send email report: %v", err)
 	}
+	log.Printf("Email sent successfully")
 }
