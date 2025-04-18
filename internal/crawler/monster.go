@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 	"job-hunter/internal/models"
 )
 
@@ -136,22 +135,4 @@ func (c *MonsterCrawler) Crawl(ctx context.Context, params JobSearchParams) ([]m
 	return jobs, nil
 }
 
-func hasClass(n *html.Node, class string) bool {
-	for _, a := range n.Attr {
-		if a.Key == "class" && strings.Contains(a.Val, class) {
-			return true
-		}
-	}
-	return false
-}
 
-func getTextContent(n *html.Node) string {
-	if n.Type == html.TextNode {
-		return n.Data
-	}
-	var text string
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		text += getTextContent(c)
-	}
-	return text
-}

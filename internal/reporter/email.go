@@ -109,10 +109,10 @@ func SendJobReport(config EmailConfig, report JobReport) error {
 	auth := smtp.PlainAuth("", config.SMTPUsername, config.SMTPPassword, config.SMTPHost)
 	addr := fmt.Sprintf("%s:%d", config.SMTPHost, config.SMTPPort)
 	log.Printf("Sending email from %s to %s via %s", config.FromEmail, config.ToEmail, addr)
-	err := smtp.SendMail(addr, auth, config.FromEmail, []string{config.ToEmail}, message.Bytes())
-	if err != nil {
+	sendErr := smtp.SendMail(addr, auth, config.FromEmail, []string{config.ToEmail}, message.Bytes())
+	if sendErr != nil {
 		log.Printf("Email content: %s", body.String())
-		return fmt.Errorf("sending mail: %w", err)
+		return fmt.Errorf("sending mail: %w", sendErr)
 	}
 	return nil
 }
