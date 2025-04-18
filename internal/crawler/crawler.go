@@ -32,8 +32,30 @@ func NewJobCrawler() *JobCrawler {
 	}
 }
 
+// getSourceName returns a human-readable name for a crawler source
+func getSourceName(s Source) string {
+	switch s.(type) {
+	case *LinkedInCrawler:
+		return "LinkedIn"
+	case *IndeedCrawler:
+		return "Indeed"
+	case *MonsterCrawler:
+		return "Monster"
+	case *GlassdoorCrawler:
+		return "Glassdoor"
+	default:
+		return "Unknown"
+	}
+}
+
 func (jc *JobCrawler) SearchJobs(ctx context.Context, params JobSearchParams) ([]models.Job, error) {
-	log.Printf("Starting job search with %d sources", len(jc.sources))
+	log.Printf("Starting job search with %d sources: %v", len(jc.sources), func() []string {
+		var names []string
+		for _, s := range jc.sources {
+			names = append(names, getSourceName(s))
+		}
+		return names
+	}())
 	var (
 		results []models.Job
 		errors  []error
@@ -60,7 +82,18 @@ func (jc *JobCrawler) SearchJobs(ctx context.Context, params JobSearchParams) ([
 			continue // Continue with next source even if this one fails
 		}
 
-		log.Printf("[%s] Found %d jobs", sourceName, len(jobs))
+		log.Printf("[%s] Found %d jobs with titles: %v", sourceName, len(jobs), func() []string {
+			var titles []string
+			for i, j := range jobs {
+				if i < 3 { // Only show first 3 jobs to avoid log spam
+					titles = append(titles, j.Title)
+				}
+			}
+			if len(jobs) > 3 {
+				titles = append(titles, "...")
+			}
+			return titles
+		}())
 		results = append(results, jobs...)
 
 		// Add a small delay between crawlers to be nice to the servers
