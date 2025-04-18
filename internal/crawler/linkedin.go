@@ -28,12 +28,6 @@ func NewLinkedInCrawler() *LinkedInCrawler {
 	}
 }
 
-// cleanText removes extra whitespace and newlines from text
-func cleanText(s string) string {
-	// Remove newlines and extra spaces
-	return strings.TrimSpace(strings.Join(strings.Fields(s), " "))
-}
-
 func (c *LinkedInCrawler) Crawl(ctx context.Context, params JobSearchParams) ([]models.Job, error) {
 	log := logger.Get().With().Str("source", "LinkedIn").Logger()
 	baseURL := baseLinkedInURL
@@ -49,8 +43,7 @@ func (c *LinkedInCrawler) Crawl(ctx context.Context, params JobSearchParams) ([]
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	
-	// Add headers to mimic browser request
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36")
 	
 	log.Debug().Msg("Sending request")
 	resp, err := c.client.Do(req)
@@ -109,22 +102,12 @@ func (c *LinkedInCrawler) Crawl(ctx context.Context, params JobSearchParams) ([]
 						case "h3":
 							// Job title
 							if node.FirstChild != nil {
-								job.Title = cleanText(node.FirstChild.Data)
+								job.Title = node.FirstChild.Data
 							}
 						case "h4":
 							// Company name
 							if node.FirstChild != nil {
-								job.Company = cleanText(node.FirstChild.Data)
-							}
-						case "span":
-							// Location
-							for _, a := range node.Attr {
-								if a.Key == "class" && strings.Contains(a.Val, "job-search-card__location") {
-									if node.FirstChild != nil {
-										job.Location = cleanText(node.FirstChild.Data)
-									}
-									break
-								}
+								job.Company = node.FirstChild.Data
 							}
 						case "a":
 							// Job URL
