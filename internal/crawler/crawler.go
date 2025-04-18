@@ -3,7 +3,7 @@ package crawler
 import (
 	"context"
 	"log"
-	"sync"
+	"time"
 
 	"job-hunter/internal/models"
 )
@@ -35,31 +35,43 @@ func NewJobCrawler() *JobCrawler {
 func (jc *JobCrawler) SearchJobs(ctx context.Context, params JobSearchParams) ([]models.Job, error) {
 	log.Printf("Starting job search with %d sources", len(jc.sources))
 	var (
-		wg      sync.WaitGroup
-		mu      sync.Mutex
 		results []models.Job
+		errors  []error
 	)
 
+	// Create a timeout context for each crawler
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 2*time.Minute) // Increased timeout since we're running sequentially
+	defer cancel()
+
 	for _, source := range jc.sources {
-		wg.Add(1)
-		go func(s Source) {
-			log.Printf("Searching source: %T", s)
-			defer wg.Done()
-			
-			jobs, err := s.Crawl(ctx, params)
-			if err != nil {
-				log.Printf("Error from source %T: %v", s, err)
-				// Log error but continue with other sources
-				return
+		sourceName := getSourceName(source)
+		log.Printf("[%s] Starting search for %s in %s", sourceName, params.Title, params.Location)
+
+		// Run crawler with timeout
+		jobs, err := source.Crawl(ctxWithTimeout, params)
+		
+		if err != nil {
+			if ctxWithTimeout.Err() != nil {
+				log.Printf("[%s] Timed out", sourceName)
+			} else {
+				log.Printf("[%s] Error: %v", sourceName, err)
 			}
-			
-			mu.Lock()
-			log.Printf("Found %d jobs from source %T", len(jobs), s)
-			results = append(results, jobs...)
-			mu.Unlock()
-		}(source)
+			errors = append(errors, err)
+			continue // Continue with next source even if this one fails
+		}
+
+		log.Printf("[%s] Found %d jobs", sourceName, len(jobs))
+		results = append(results, jobs...)
+
+		// Add a small delay between crawlers to be nice to the servers
+		time.Sleep(2 * time.Second)
 	}
 
-	wg.Wait()
+	// Log summary
+	log.Printf("Search complete. Found %d total jobs", len(results))
+	if len(errors) > 0 {
+		log.Printf("Warning: %d sources had errors", len(errors))
+	}
+
 	return results, nil
 }
