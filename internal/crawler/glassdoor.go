@@ -1,11 +1,14 @@
 package crawler
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"golang.org/x/net/html"
+	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 	"job-hunter/internal/models"
 )
@@ -21,13 +24,13 @@ func NewGlassdoorCrawler() *GlassdoorCrawler {
 }
 
 func (c *GlassdoorCrawler) Crawl(ctx context.Context, params JobSearchParams) ([]models.Job, error) {
-	baseURL := "https://www.glassdoor.com/Job/jobs.htm"
+	var baseGlassdoorURL = "https://www.glassdoor.com/Job/jobs.htm"
 	urlParams := url.Values{}
 	urlParams.Add("sc.keyword", params.Title)
 	urlParams.Add("locT", params.Location)
 	urlParams.Add("format", "json")
 	
-	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"?"+urlParams.Encode(), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", baseGlassdoorURL+"?"+urlParams.Encode(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating glassdoor request: %w", err)
 	}
@@ -48,35 +51,89 @@ func (c *GlassdoorCrawler) Crawl(ctx context.Context, params JobSearchParams) ([
 		return nil, fmt.Errorf("glassdoor unexpected status code: %d", resp.StatusCode)
 	}
 
-	var response struct {
-		JobListings []struct {
-			JobTitle     string    `json:"jobTitle"`
-			CompanyName  string    `json:"employer"`
-			Location     string    `json:"location"`
-			ListingURL   string    `json:"jobViewUrl"`
-			DatePosted   time.Time `json:"datePosted"`
-			SalaryRange  string    `json:"salaryRange,omitempty"`
-			Description  string    `json:"jobDescription"`
-		} `json:"listings"`
+	var jobs []models.Job
+
+	// Read all response bytes
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return nil, fmt.Errorf("decoding glassdoor response: %w", err)
+	// Parse HTML response
+	doc, err := html.Parse(bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("parsing HTML: %w", err)
 	}
 
-	jobs := make([]models.Job, len(response.JobListings))
-	for i, listing := range response.JobListings {
-		jobs[i] = models.Job{
-			Title:       listing.JobTitle,
-			Company:     listing.CompanyName,
-			Location:    listing.Location,
-			URL:         listing.ListingURL,
-			PostedDate:  listing.DatePosted,
-			Salary:      listing.SalaryRange,
-			Description: listing.Description,
-			Source:      "Glassdoor",
+	// Find job listings
+	var f func(*html.Node)
+	f = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "li" {
+			// Check if this is a job card
+			isJobCard := false
+			for _, a := range n.Attr {
+				if a.Key == "class" && strings.Contains(a.Val, "react-job-listing") {
+					isJobCard = true
+					break
+				}
+			}
+
+			if isJobCard {
+				// Extract job details
+				job := models.Job{Source: "Glassdoor"}
+
+				// Find title, company, location, and link
+				var findDetails func(*html.Node)
+				findDetails = func(node *html.Node) {
+					if node.Type == html.ElementNode {
+						switch {
+						case node.Data == "a" && hasClass(node, "jobLink"):
+							// Job title
+							if text := getTextContent(node); text != "" {
+								job.Title = text
+							}
+							// Job URL
+							for _, a := range node.Attr {
+								if a.Key == "href" {
+									job.URL = "https://www.glassdoor.com" + a.Val
+									break
+								}
+							}
+						case node.Data == "span" && hasClass(node, "companyName"):
+							// Company name
+							if text := getTextContent(node); text != "" {
+								job.Company = text
+							}
+						case node.Data == "span" && hasClass(node, "location"):
+							// Location
+							if text := getTextContent(node); text != "" {
+								job.Location = text
+							}
+						}
+					}
+					for c := node.FirstChild; c != nil; c = c.NextSibling {
+						findDetails(c)
+					}
+				}
+
+				findDetails(n)
+				
+				// Generate a unique ID
+				job.ID = fmt.Sprintf("glassdoor-%s-%s", url.QueryEscape(job.Title), url.QueryEscape(job.Company))
+				
+				// Add job if we have the minimum required fields
+				if job.Title != "" && job.Company != "" {
+					jobs = append(jobs, job)
+				}
+			}
+		}
+
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			f(c)
 		}
 	}
+
+	f(doc)
 
 	return jobs, nil
 }

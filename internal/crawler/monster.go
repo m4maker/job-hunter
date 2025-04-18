@@ -1,11 +1,14 @@
 package crawler
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
+	"golang.org/x/net/html"
+	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 	"job-hunter/internal/models"
 )
@@ -21,13 +24,13 @@ func NewMonsterCrawler() *MonsterCrawler {
 }
 
 func (c *MonsterCrawler) Crawl(ctx context.Context, params JobSearchParams) ([]models.Job, error) {
-	baseURL := "https://www.monster.com/jobs/search"
+	var baseMonsterURL = "https://www.monster.com/jobs/search"
 	urlParams := url.Values{}
 	urlParams.Add("q", params.Title)
 	urlParams.Add("where", params.Location)
 	urlParams.Add("intcid", "api_search")
 	
-	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"?"+urlParams.Encode(), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", baseMonsterURL+"?"+urlParams.Encode(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating monster request: %w", err)
 	}
@@ -45,35 +48,110 @@ func (c *MonsterCrawler) Crawl(ctx context.Context, params JobSearchParams) ([]m
 		return nil, fmt.Errorf("monster unexpected status code: %d", resp.StatusCode)
 	}
 
-	var response struct {
-		JobResults []struct {
-			Title       string    `json:"title"`
-			Company     string    `json:"company"`
-			Location    string    `json:"location"`
-			URL         string    `json:"jobUrl"`
-			PostedDate  time.Time `json:"postedDate"`
-			Salary      string    `json:"estimatedSalary,omitempty"`
-			Description string    `json:"description"`
-		} `json:"jobs"`
+	var jobs []models.Job
+
+	// Read all response bytes
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return nil, fmt.Errorf("decoding monster response: %w", err)
+	// Parse HTML response
+	doc, err := html.Parse(bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("parsing HTML: %w", err)
 	}
 
-	jobs := make([]models.Job, len(response.JobResults))
-	for i, result := range response.JobResults {
-		jobs[i] = models.Job{
-			Title:       result.Title,
-			Company:     result.Company,
-			Location:    result.Location,
-			URL:         result.URL,
-			PostedDate:  result.PostedDate,
-			Salary:      result.Salary,
-			Description: result.Description,
-			Source:      "Monster",
+	// Find job listings
+	var f func(*html.Node)
+	f = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "div" {
+			// Check if this is a job card
+			isJobCard := false
+			for _, a := range n.Attr {
+				if a.Key == "class" && strings.Contains(a.Val, "job-cardstyle__JobCardComponent") {
+					isJobCard = true
+					break
+				}
+			}
+
+			if isJobCard {
+				// Extract job details
+				job := models.Job{Source: "Monster"}
+
+				// Find title, company, location, and link
+				var findDetails func(*html.Node)
+				findDetails = func(node *html.Node) {
+					if node.Type == html.ElementNode {
+						switch {
+						case node.Data == "h3" && hasClass(node, "job-cardstyle__JobTitle"):
+							// Job title
+							if text := getTextContent(node); text != "" {
+								job.Title = text
+							}
+						case node.Data == "span" && hasClass(node, "job-cardstyle__CompanyName"):
+							// Company name
+							if text := getTextContent(node); text != "" {
+								job.Company = text
+							}
+						case node.Data == "span" && hasClass(node, "job-cardstyle__Location"):
+							// Location
+							if text := getTextContent(node); text != "" {
+								job.Location = text
+							}
+						case node.Data == "a":
+							// Job URL
+							for _, a := range node.Attr {
+								if a.Key == "href" && strings.Contains(a.Val, "/job-openings/") {
+									job.URL = "https://www.monster.com" + a.Val
+									break
+								}
+							}
+						}
+					}
+					for c := node.FirstChild; c != nil; c = c.NextSibling {
+						findDetails(c)
+					}
+				}
+
+				findDetails(n)
+				
+				// Generate a unique ID
+				job.ID = fmt.Sprintf("monster-%s-%s", url.QueryEscape(job.Title), url.QueryEscape(job.Company))
+				
+				// Add job if we have the minimum required fields
+				if job.Title != "" && job.Company != "" {
+					jobs = append(jobs, job)
+				}
+			}
+		}
+
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			f(c)
 		}
 	}
 
+	f(doc)
+
 	return jobs, nil
+}
+
+func hasClass(n *html.Node, class string) bool {
+	for _, a := range n.Attr {
+		if a.Key == "class" && strings.Contains(a.Val, class) {
+			return true
+		}
+	}
+	return false
+}
+
+func getTextContent(n *html.Node) string {
+	if n.Type == html.TextNode {
+		return n.Data
+	}
+	var text string
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		text += getTextContent(c)
+	}
+	return text
 }
