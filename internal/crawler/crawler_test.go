@@ -2,12 +2,12 @@ package crawler
 
 import (
 	"context"
+	"encoding/json"
+	"job-hunter/internal/models"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
-	"encoding/json"
-	"job-hunter/internal/models"
 )
 
 func TestLinkedInCrawler(t *testing.T) {
@@ -22,12 +22,12 @@ func TestLinkedInCrawler(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		mockJobs := []models.Job{
 			{
-				ID:          "1",
-				Title:       "Software Engineer",
-				Company:     "Test Company",
-				Location:    "Remote",
-				PostedDate:  time.Now(),
-				Source:      "LinkedIn",
+				ID:         "1",
+				Title:      "Software Engineer",
+				Company:    "Test Company",
+				Location:   "Remote",
+				PostedDate: time.Now(),
+				Source:     "LinkedIn",
 			},
 		}
 		json.NewEncoder(w).Encode(mockJobs)
@@ -44,7 +44,10 @@ func TestLinkedInCrawler(t *testing.T) {
 	baseLinkedInURL = server.URL
 	defer func() { baseLinkedInURL = oldURL }()
 
-	jobs, err := crawler.Crawl(context.Background(), "golang")
+	jobs, err := crawler.Crawl(context.Background(), JobSearchParams{
+		Title:    "golang",
+		Location: "Remote",
+	})
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -75,12 +78,12 @@ func TestIndeedCrawler(t *testing.T) {
 		}{
 			Results: []models.Job{
 				{
-					ID:          "2",
-					Title:       "Backend Developer",
-					Company:     "Test Corp",
-					Location:    "San Francisco",
-					PostedDate:  time.Now(),
-					Source:      "Indeed",
+					ID:         "2",
+					Title:      "Backend Developer",
+					Company:    "Test Corp",
+					Location:   "San Francisco",
+					PostedDate: time.Now(),
+					Source:     "Indeed",
 				},
 			},
 		}
@@ -97,7 +100,10 @@ func TestIndeedCrawler(t *testing.T) {
 	baseIndeedURL = server.URL
 	defer func() { baseIndeedURL = oldURL }()
 
-	jobs, err := crawler.Crawl(context.Background(), "golang")
+	jobs, err := crawler.Crawl(context.Background(), JobSearchParams{
+		Title:    "golang",
+		Location: "San Francisco",
+	})
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}

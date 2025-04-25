@@ -37,9 +37,10 @@ const emailTemplate = `
         body { font-family: Arial, sans-serif; }
         .job { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
         .new { background-color: #e6ffe6; }
-        .title { color: #2c5282; font-size: 18px; }
-        .company { color: #4a5568; font-size: 16px; }
+        .title { color: #2c5282; font-size: 18px; margin-bottom: 5px; }
+        .company { color: #4a5568; font-size: 16px; font-weight: bold; margin-bottom: 5px; }
         .source { color: #718096; font-size: 14px; }
+        .location { color: #4a5568; font-style: italic; margin-bottom: 5px; }
     </style>
 </head>
 <body>
@@ -53,7 +54,8 @@ const emailTemplate = `
     {{range .NewJobs}}
     <div class="job new">
         <div class="title">{{.Title}}</div>
-        <div class="company">{{.Company}}</div>
+        <div class="company">Company: {{.Company}}</div>
+        {{if .Location}}<div class="location">Location: {{.Location}}</div>{{end}}
         <div class="source">Source: {{.Source}}</div>
         {{if .URL}}<a href="{{.URL}}">View Job</a>{{end}}
     </div>
@@ -64,7 +66,8 @@ const emailTemplate = `
     {{range .Jobs}}
     <div class="job">
         <div class="title">{{.Title}}</div>
-        <div class="company">{{.Company}}</div>
+        <div class="company">Company: {{.Company}}</div>
+        {{if .Location}}<div class="location">Location: {{.Location}}</div>{{end}}
         <div class="source">Source: {{.Source}}</div>
         {{if .URL}}<a href="{{.URL}}">View Job</a>{{end}}
     </div>
@@ -92,7 +95,7 @@ func SendJobReport(config EmailConfig, report JobReport) error {
 	headers := map[string]string{
 		"From":         config.FromEmail,
 		"To":           config.ToEmail,
-		"Subject":      fmt.Sprintf("Job Search Report - %s", report.Date.Format("Jan 02, 2006")),
+		"Subject":      fmt.Sprintf("Job Search Report for %s - %s", report.Title, report.Date.Format("Jan 02, 2006")),
 		"MIME-Version": "1.0",
 		"Content-Type": "text/html; charset=UTF-8",
 	}
