@@ -4,14 +4,15 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"golang.org/x/net/html"
 	"io"
+	"job-hunter/internal/logger"
+	"job-hunter/internal/models"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
-	"job-hunter/internal/logger"
-	"job-hunter/internal/models"
+
+	"golang.org/x/net/html"
 )
 
 var baseIndeedURL = "https://www.indeed.com/jobs"
@@ -22,12 +23,10 @@ type IndeedCrawler struct {
 	client *http.Client
 }
 
-
-
 func NewIndeedCrawler() *IndeedCrawler {
 	return &IndeedCrawler{
 		client: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 15 * time.Second, // Increased timeout
 		},
 	}
 }
@@ -38,21 +37,23 @@ func (c *IndeedCrawler) Crawl(ctx context.Context, params JobSearchParams) ([]mo
 	urlParams := url.Values{}
 	urlParams.Add("q", params.Title)
 	urlParams.Add("l", params.Location)
-	urlParams.Add("format", "json")
+	urlParams.Add("sort", "date") // Sort by date to get newest jobs
 	urlParams.Add("limit", "25")
-	urlParams.Add("start", "0")
-	// Note: In a production environment, you would need to sign up for Indeed's API
-	// and include your publisher ID and other authentication parameters
-	
+
 	log.Info().Str("url", baseURL+"?"+urlParams.Encode()).Msg("Creating request")
 	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"?"+urlParams.Encode(), nil)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to create request")
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
-	
+
+	// Add more headers to mimic a real browser
 	req.Header.Set("User-Agent", userAgent)
-	
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
+	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("Upgrade-Insecure-Requests", "1")
+
 	log.Debug().Msg("Sending request")
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -60,7 +61,7 @@ func (c *IndeedCrawler) Crawl(ctx context.Context, params JobSearchParams) ([]mo
 		return nil, fmt.Errorf("making request: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		log.Error().Int("status_code", resp.StatusCode).Msg("Unexpected status code")
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
@@ -85,14 +86,18 @@ func (c *IndeedCrawler) Crawl(ctx context.Context, params JobSearchParams) ([]mo
 		return nil, fmt.Errorf("parsing HTML: %w", err)
 	}
 
-	// Find job listings
+	// Find job listings - updated selectors for current Indeed structure
 	var f func(*html.Node)
 	f = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "div" {
-			// Check if this is a job card
+		// Look for job cards with updated class names
+		if n.Type == html.ElementNode && (n.Data == "div" || n.Data == "li") {
 			isJobCard := false
 			for _, a := range n.Attr {
-				if a.Key == "class" && strings.Contains(a.Val, "job_seen_beacon") {
+				// Check multiple possible class names that Indeed might use
+				if a.Key == "class" && (strings.Contains(a.Val, "job_seen_beacon") ||
+					strings.Contains(a.Val, "jobsearch-ResultsList") ||
+					strings.Contains(a.Val, "tapItem") ||
+					strings.Contains(a.Val, "job-container")) {
 					isJobCard = true
 					break
 				}
@@ -106,27 +111,48 @@ func (c *IndeedCrawler) Crawl(ctx context.Context, params JobSearchParams) ([]mo
 				var findDetails func(*html.Node)
 				findDetails = func(node *html.Node) {
 					if node.Type == html.ElementNode {
-						switch {
-						case node.Data == "h2" && hasClass(node, "jobTitle"):
-							// Job title
+						// Check for job title in various elements
+						if (node.Data == "h2" || node.Data == "a") &&
+							(hasClass(node, "jobTitle") ||
+								hasClass(node, "jcs-JobTitle") ||
+								hasClass(node, "title")) {
 							if text := getTextContent(node); text != "" {
 								job.Title = text
 							}
-						case node.Data == "span" && hasClass(node, "companyName"):
-							// Company name
+						}
+
+						// Check for company name
+						if (node.Data == "span" || node.Data == "div") &&
+							(hasClass(node, "companyName") ||
+								hasClass(node, "company-name") ||
+								hasClass(node, "companyInfo")) {
 							if text := getTextContent(node); text != "" {
 								job.Company = text
 							}
-						case node.Data == "div" && hasClass(node, "companyLocation"):
-							// Location
+						}
+
+						// Check for location
+						if (node.Data == "div" || node.Data == "span") &&
+							(hasClass(node, "companyLocation") ||
+								hasClass(node, "location") ||
+								hasClass(node, "job-location")) {
 							if text := getTextContent(node); text != "" {
 								job.Location = text
 							}
-						case node.Data == "a":
-							// Job URL
+						}
+
+						// Check for job URL
+						if node.Data == "a" {
 							for _, a := range node.Attr {
-								if a.Key == "href" && strings.Contains(a.Val, "/viewjob?") {
-									job.URL = "https://www.indeed.com" + a.Val
+								if a.Key == "href" && (strings.Contains(a.Val, "/viewjob?") ||
+									strings.Contains(a.Val, "/job/") ||
+									strings.Contains(a.Val, "/pagead/")) {
+									// Ensure it's a full URL
+									if strings.HasPrefix(a.Val, "/") {
+										job.URL = "https://www.indeed.com" + a.Val
+									} else {
+										job.URL = a.Val
+									}
 									break
 								}
 							}
@@ -138,10 +164,10 @@ func (c *IndeedCrawler) Crawl(ctx context.Context, params JobSearchParams) ([]mo
 				}
 
 				findDetails(n)
-				
+
 				// Generate a unique ID
 				job.ID = fmt.Sprintf("indeed-%s-%s", url.QueryEscape(job.Title), url.QueryEscape(job.Company))
-				
+
 				// Add job if we have the minimum required fields
 				if job.Title != "" && job.Company != "" {
 					log.Debug().Str("title", job.Title).Str("company", job.Company).Str("location", job.Location).Msg("Found job")
