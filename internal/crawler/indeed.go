@@ -9,6 +9,7 @@ import (
 	"job-hunter/internal/models"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -38,6 +39,7 @@ func (c *IndeedCrawler) Crawl(ctx context.Context, params JobSearchParams) ([]mo
 	urlParams.Add("q", params.Title)
 	urlParams.Add("l", params.Location)
 	urlParams.Add("sort", "date") // Sort by date to get newest jobs
+	urlParams.Add("fromage", "7") // Jobs from last 7 days
 	urlParams.Add("limit", "25")
 
 	log.Info().Str("url", baseURL+"?"+urlParams.Encode()).Msg("Creating request")
@@ -53,6 +55,8 @@ func (c *IndeedCrawler) Crawl(ctx context.Context, params JobSearchParams) ([]mo
 	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
 	req.Header.Set("Connection", "keep-alive")
 	req.Header.Set("Upgrade-Insecure-Requests", "1")
+	// Add a referer to make the request look more legitimate
+	req.Header.Set("Referer", "https://www.indeed.com/")
 
 	log.Debug().Msg("Sending request")
 	resp, err := c.client.Do(req)
@@ -78,6 +82,14 @@ func (c *IndeedCrawler) Crawl(ctx context.Context, params JobSearchParams) ([]mo
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
 
+	// Save response for debugging if needed
+	debugFile := "/tmp/indeed_response.html"
+	if err := os.WriteFile(debugFile, body, 0644); err != nil {
+		log.Warn().Err(err).Msg("Failed to save debug file")
+	} else {
+		log.Debug().Str("file", debugFile).Msg("Saved response for debugging")
+	}
+
 	// Parse HTML response
 	log.Debug().Msg("Parsing HTML response")
 	doc, err := html.Parse(bytes.NewReader(body))
@@ -90,14 +102,16 @@ func (c *IndeedCrawler) Crawl(ctx context.Context, params JobSearchParams) ([]mo
 	var f func(*html.Node)
 	f = func(n *html.Node) {
 		// Look for job cards with updated class names
-		if n.Type == html.ElementNode && (n.Data == "div" || n.Data == "li") {
+		if n.Type == html.ElementNode && (n.Data == "div" || n.Data == "li" || n.Data == "td") {
 			isJobCard := false
 			for _, a := range n.Attr {
 				// Check multiple possible class names that Indeed might use
 				if a.Key == "class" && (strings.Contains(a.Val, "job_seen_beacon") ||
 					strings.Contains(a.Val, "jobsearch-ResultsList") ||
 					strings.Contains(a.Val, "tapItem") ||
-					strings.Contains(a.Val, "job-container")) {
+					strings.Contains(a.Val, "job-container") ||
+					strings.Contains(a.Val, "result") ||
+					strings.Contains(a.Val, "jobCard")) {
 					isJobCard = true
 					break
 				}
@@ -112,22 +126,26 @@ func (c *IndeedCrawler) Crawl(ctx context.Context, params JobSearchParams) ([]mo
 				findDetails = func(node *html.Node) {
 					if node.Type == html.ElementNode {
 						// Check for job title in various elements
-						if (node.Data == "h2" || node.Data == "a") &&
+						if (node.Data == "h2" || node.Data == "a" || node.Data == "span") &&
 							(hasClass(node, "jobTitle") ||
 								hasClass(node, "jcs-JobTitle") ||
-								hasClass(node, "title")) {
+								hasClass(node, "title") ||
+								hasClass(node, "job-title")) {
 							if text := getTextContent(node); text != "" {
 								job.Title = text
+								log.Debug().Str("title", text).Msg("Found job title")
 							}
 						}
 
 						// Check for company name
-						if (node.Data == "span" || node.Data == "div") &&
+						if (node.Data == "span" || node.Data == "div" || node.Data == "a") &&
 							(hasClass(node, "companyName") ||
 								hasClass(node, "company-name") ||
-								hasClass(node, "companyInfo")) {
+								hasClass(node, "companyInfo") ||
+								hasClass(node, "company")) {
 							if text := getTextContent(node); text != "" {
 								job.Company = text
+								log.Debug().Str("company", text).Msg("Found company name")
 							}
 						}
 
@@ -146,7 +164,8 @@ func (c *IndeedCrawler) Crawl(ctx context.Context, params JobSearchParams) ([]mo
 							for _, a := range node.Attr {
 								if a.Key == "href" && (strings.Contains(a.Val, "/viewjob?") ||
 									strings.Contains(a.Val, "/job/") ||
-									strings.Contains(a.Val, "/pagead/")) {
+									strings.Contains(a.Val, "/pagead/") ||
+									strings.Contains(a.Val, "/rc/clk")) {
 									// Ensure it's a full URL
 									if strings.HasPrefix(a.Val, "/") {
 										job.URL = "https://www.indeed.com" + a.Val
@@ -172,6 +191,8 @@ func (c *IndeedCrawler) Crawl(ctx context.Context, params JobSearchParams) ([]mo
 				if job.Title != "" && job.Company != "" {
 					log.Debug().Str("title", job.Title).Str("company", job.Company).Str("location", job.Location).Msg("Found job")
 					jobs = append(jobs, job)
+				} else {
+					log.Debug().Str("title", job.Title).Str("company", job.Company).Msg("Skipping incomplete job")
 				}
 			}
 		}
